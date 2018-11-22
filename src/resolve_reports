@@ -1,0 +1,190 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import re
+import os
+import csv
+import sys
+import json
+import urllib2
+import httplib2
+import unicodecsv
+from optparse import OptionParser
+
+
+URI_API_ENDP = os.environ['URI_API_ENDP']
+URI_API_USER = os.environ['URI_API_USER']
+URI_API_PASS = os.environ['URI_API_PASS']
+AUTH_API_ENDP = os.environ['AUTH_API_ENDP']
+URI_SCHEME = os.environ['URI_SCHEME']
+COUNTRY_URI_SCHEME = os.environ['COUNTRY_URI_SCHEME']
+URI_STRICT = os.environ['URI_STRICT']
+EXCLUDED_URLS = json.loads(os.getenv('EXCLUDED_URLS'))
+CACHE = {}
+ARGS = [
+    {
+        'val': '--measure',
+        'dest': 'measure',
+        'action': 'store',
+        'default': None,
+        'help': 'Measure URI, e.g. tag:operas.eu,2018:readership:obp-pdf'
+    }, {
+        'val': '--prefix',
+        'dest': 'prefix',
+        'action': 'store',
+        'default': None,
+        'help': 'URL prefix for sanitisation e.g. https://www.obp.com'
+    }, {
+        'val': '--date',
+        'dest': 'date',
+        'action': 'store',
+        'default': None,
+        'help': 'Date that input refers to'
+    }, {
+        'val': '--regex',
+        'dest': 'regex',
+        'action': 'append',
+        'default': [],
+        'help': 'URL regex for sanitisation'
+    }, {
+        'val': '--add-headers',
+        'dest': 'add_headers',
+        'action': 'store_true',
+        'default': [],
+        'help': 'Whether to print report headers'
+    }
+]
+
+
+def get_token(url, email, passwd):
+    h = httplib2.Http()
+    credentials = {'email': email, 'password': passwd}
+    headers = {'content-type': 'application/json'}
+    res, content = h.request(url, 'POST', json.dumps(credentials), headers)
+    try:
+        assert res.status == 200
+    except AssertionError:
+        raise ValueError(content)
+    return json.loads(content)['data'][0]['token']
+
+
+def url_to_id(url, timestamp):
+    if url in CACHE:
+        return CACHE[url]
+    req = "%s?uri=%s&filter=uri_scheme:%s&strict=%s" \
+          % (URI_API_ENDP, url, URI_SCHEME, URI_STRICT)
+    h = httplib2.Http()
+    res, content = h.request(req, 'GET', headers={'Authorization': AUTH})
+    try:
+        assert res.status == 200
+    except AssertionError:
+        if url in EXCLUDED_URLS:
+            return []
+        r = json.loads(content)
+        print >>sys.stderr, "%s: %s (%s)" % (r['message'],
+                                             r['parameters']['uri'], timestamp)
+        return []
+
+    entry = json.loads(content)['data']
+    CACHE[url] = entry
+
+    return entry
+
+
+def normalise_url(url, prefix):
+    try:
+        u = prefix + url.lower()
+        return u[:-1] if u[-1] == "/" else u
+    except BaseException:
+        print >>sys.stderr, "Error parsing: " + url
+        raise
+
+
+def convert_url(url):
+    try:
+        if url.startswith("http"):
+            u = urllib2.urlparse.urlparse(url).path
+        else:
+            u = url
+        return re.sub(r'^//', '/', re.sub(r'([^:])/+', '\\1/', u))
+    except BaseException:
+        print >>sys.stderr, "Error parsing: " + url
+        raise
+
+
+def sanitise_url(url, regexes):
+    for regex in regexes:
+        matched = re.search(re.compile(regex), url)
+        if matched is not None:
+            url = matched.group(0)
+            break
+    return url
+
+
+def get_options(args):
+    parser = OptionParser()
+    for arg in args:
+        parser.add_option(arg['val'], dest=arg['dest'], default=arg['default'],
+                          action=arg['action'], help=arg['help'])
+    options, rest = parser.parse_args()
+
+    assert rest == []
+    assert options.measure and options.prefix and options.date
+    return options
+
+
+def standarise_country(country, uri_scheme=""):
+    try:
+        assert uri_scheme
+    except AssertionError:
+        return country
+    return uri_scheme + ':' + country
+
+
+def standarise_row(row):
+    # we want to return path, country and hits but GA reports at web root
+    # will not contain the path, so we standarise it to '/'
+    return {2: ['/', row[0], row[1]], 3: row}[len(row)]
+
+
+def resolve(date, prefix, regex):
+    timestamp = date + " 00:00:00"
+    r = csv.reader(sys.stdin)
+    next(r, None)  # skip the headers
+
+    for row in r:
+        path, country_code, value = standarise_row(row)
+        url = sanitise_url(normalise_url(convert_url(path), prefix), regex)
+        if country_code == 'ZZ':
+            # Google uses country code ZZ when no country data is available
+            country = ''
+        else:
+            country = standarise_country(country_code, COUNTRY_URI_SCHEME)
+        for identifier in url_to_id(url, date):
+            uri = identifier['URI']
+            yield (timestamp, uri, country, value)
+
+
+def run(measure, prefix, date, regex, add_headers):
+    hits = {}
+    for timestamp, uri, country, value in resolve(date, prefix, regex):
+        key = (timestamp, uri, country)
+        if key not in hits:
+            hits[key] = 0
+        hits[key] += int(value)
+
+    w = unicodecsv.writer(sys.stdout)
+    if add_headers:
+        w.writerow(('Measure', 'Timestamp', 'URI', 'Country', 'Value'))
+    for key, value in hits.iteritems():
+        row = tuple([measure] + list(key) + [value])
+        w.writerow(row)
+
+
+API_JWTOKEN = get_token(AUTH_API_ENDP, URI_API_USER, URI_API_PASS)
+AUTH = 'Bearer ' + API_JWTOKEN
+
+if __name__ == '__main__':
+    options = get_options(ARGS)
+    run(options.measure, options.prefix, options.date, options.regex,
+        options.add_headers)

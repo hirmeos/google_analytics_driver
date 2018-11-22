@@ -1,0 +1,145 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Bridge `process_download_logs` and `annotate_download_logs.py` producing CSV
+individual session (using `annotate_download_logs.py`) for every output file
+produced by `process_download_logs`
+"""
+import os
+import json
+import subprocess
+from datetime import datetime, timedelta
+
+MODES = json.loads(os.getenv('MODES'))
+KEY_PATH = os.environ['KEY_PATH']
+OUTDIR = os.environ['OUTDIR']
+CACHEDIR = os.environ['CACHEDIR']
+CUTOFF_DAYS = int(os.environ['CUTOFF_DAYS'])
+
+
+def outstream(filename):
+    return open(filename, "w")
+
+
+def instream(filename):
+    return open(filename, "r")
+
+
+def get_cache_filename(odir, name, d):
+    return "%s/google-analytics_%s_%s.csv" % (odir, d, name)
+
+
+def get_output_filename(odir, date):
+    return "%s/GoogleAnalytics_%s.csv" % (odir, date)
+
+
+def generate_dates(date, cutoff_date):
+    epoch = datetime.strptime(date, '%Y-%m-%d')
+    cutoff = datetime.strptime(cutoff_date, '%Y-%m-%d')
+
+    i = epoch
+    while i < cutoff:
+        yield i
+        i += timedelta(1, 0, 0)
+
+
+def get_cutoff_date(cutoff_days):
+    cutoff = datetime.now() - timedelta(cutoff_days, 0, 0)
+    return cutoff.strftime('%Y-%m-%d')
+
+
+def get_earliest(dates):
+    earliest = dates[0]
+    for date in dates:
+        date_time = datetime.strptime(date, '%Y-%m-%d')
+        earliest_time = datetime.strptime(earliest, '%Y-%m-%d')
+        try:
+            assert date_time > earliest_time
+        except AssertionError:
+            earliest = date
+    return earliest
+
+
+def exists_and_not_empty(filename):
+    try:
+        return os.path.getsize(filename) > 0
+    except (AssertionError, OSError):
+        return False
+
+
+def old_or_empty(filename, cutoff):
+    cutoff = datetime.now() - timedelta(days=cutoff)
+    try:
+        size = os.path.getsize(filename)
+        time = datetime.fromtimestamp(os.path.getctime(filename))
+        assert size > 0 and time > cutoff
+    except (AssertionError, OSError):
+        return True
+    return False
+
+
+def compile_config(config_list):
+    vals = []
+    for c in config_list:
+        vals.append('--' + c['name'])
+        vals.append(c['value'])
+    return vals
+
+
+def cache_ga_stats(outputstream, date, key_path, config):
+    cmd = ['./retrieve_ga_stats',
+           '--start-date', date,
+           '--end-date', date,
+           '--key-path', key_path] + config
+    subprocess.call(cmd, stdout=outputstream)
+
+
+def resolve_cache(output_stream, input_stream, measure,
+                  prefix, date, regex, headers):
+    regexes = compile_config([{'name': 'regex', 'value': r} for r in regex])
+    add_headers = ['--add-headers'] if headers else []
+    cmd = ['./resolve_reports',
+           '--measure', measure,
+           '--prefix', prefix,
+           '--date', date] + regexes + add_headers
+    subprocess.call(cmd, stdout=output_stream, stdin=input_stream)
+
+
+def run():
+    cutoff_date = get_cutoff_date(CUTOFF_DAYS)
+    # cache Google Analtics API responses for all MODES
+    for m in MODES:
+        config = compile_config(m['config'])
+        for day in generate_dates(m['startDate'], cutoff_date):
+            date = day.strftime('%Y-%m-%d')
+            cache_file = get_cache_filename(CACHEDIR, m['name'], date)
+            if not exists_and_not_empty(cache_file):
+                cache_ga_stats(outstream(cache_file), date, KEY_PATH, config)
+
+    # now we standarise GA reports and store them in each output CSV
+    earliest_date = get_earliest([m['startDate'] for m in MODES])
+    for day in generate_dates(earliest_date, cutoff_date):
+        date = day.strftime('%Y-%m-%d')
+        out_file = get_output_filename(OUTDIR, date)
+
+        # continue if output file already exists
+        if exists_and_not_empty(out_file):
+            continue
+
+        i = 0
+        output = outstream(out_file)
+        for m in MODES:
+            cache_file = get_cache_filename(CACHEDIR, m['name'], date)
+            # at this point all *relevant* cache files must exists
+            if not exists_and_not_empty(cache_file):
+                continue
+            inputs = instream(cache_file)
+            regex = m['regex'] if 'regex' in m else []
+            headers = i == 0  # only include headers in first iteration
+            i += 1
+            resolve_cache(output, inputs, m['measure'],
+                          m['prefix'], date, regex, headers)
+
+
+if __name__ == '__main__':
+    run()
