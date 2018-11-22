@@ -155,7 +155,11 @@ def resolve(date, prefix, regex):
     for row in r:
         path, country_code, value = standarise_row(row)
         url = sanitise_url(normalise_url(convert_url(path), prefix), regex)
-        country = standarise_country(country_code, COUNTRY_URI_SCHEME)
+        if country_code == 'ZZ':
+            # Google uses country code ZZ when no country data is available
+            country = ''
+        else:
+            country = standarise_country(country_code, COUNTRY_URI_SCHEME)
         for identifier in url_to_id(url, date):
             uri = identifier['URI']
             yield (timestamp, uri, country, value)
