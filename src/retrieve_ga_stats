@@ -1,0 +1,138 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import sys
+import traceback
+import unicodecsv
+from optparse import OptionParser
+from service import initialize_service
+from apiclient.errors import HttpError
+
+
+ARGS = [
+    {
+        'val': '--start-date',
+        'dest': 'start_date',
+        'action': 'store',
+        'help': 'beginning of date range, as YYYY-mm-dd'
+    }, {
+        'val': '--end-date',
+        'dest': 'end_date',
+        'action': 'store',
+        'help': 'end of date range, as YYYY-mm-dd'
+    }, {
+        'val': '--key-path',
+        'dest': 'key_path',
+        'action': 'store',
+        'help': 'filename for service account keys, e.g., obp.json'
+    }, {
+        'val': '--view-id',
+        'dest': 'view_id',
+        'action': 'store',
+        'help': 'View ID, a unicode string, e.g., 44301552'
+    }, {
+        'val': '--metric',
+        'dest': 'metrics',
+        'action': 'append',
+        'help': 'metric to report, e.g., uniquePageviews; can specify multiple'
+    }, {
+        'val': '--dimension',
+        'dest': 'dimensions',
+        'action': 'append',
+        'help': 'dimension for breakdown, e.g., country; can specify multiple'
+    }, {
+        'val': '--filter',
+        'dest': 'filters',
+        'action': 'append',
+        'help': 'filter by path, e.g., ^/htmlreader/; can specify multiple'
+    }
+]
+
+
+def print_results(results):
+    """Print the column headers, and all the rows of data."""
+    def make_rows():
+        report = results.get("reports")[0]
+        columnHeader = report.get('columnHeader', {})
+        dimensionHeaders = columnHeader.get('dimensions', [])
+        metricHeaders = columnHeader.get('metricHeader', {}) \
+                                    .get('metricHeaderEntries', [])
+        yield dimensionHeaders + [m.get("name") for m in metricHeaders]
+        for row in report.get('data').get('rows', []):
+            vals = row.get('dimensions') + row.get('metrics')[0].get('values')
+            yield [cell.encode("utf8") for cell in vals]
+
+    w = unicodecsv.writer(sys.stdout)
+    for output in make_rows():
+        w.writerow(output)
+
+
+def build_ga_request(view_id, start, end, metrics, dimensions, filters=[]):
+    drange = [{'startDate': start, 'endDate': end}]
+    metrics = [{'expression': m} for m in metrics]
+    dimensions = [{'name': d} for d in dimensions]
+
+    request = {
+        'reportRequests': [
+            {
+                'viewId': view_id,
+                'dateRanges': drange,
+                'metrics': metrics,
+                'dimensions': dimensions,
+            }]}
+
+    if filters:
+        f = [{'filters': [
+            {'dimension_name': 'ga:pagePath', 'expressions': filters}
+        ]}]
+        request['reportRequests'][0]['dimensionFilterClauses'] = f
+    return request
+
+
+def get_statistics(service, request):
+    return service.reports().batchGet(body=request).execute()
+
+
+def print_ga_csv(key_file_location, view_id, start_date, end_date,
+                 metrics, dimensions, filters):
+    try:
+        service = initialize_service(key_file_location)
+        request = build_ga_request(view_id, start_date, end_date, metrics,
+                                   dimensions, filters)
+        results = get_statistics(service, request)
+        print_results(results)
+    except HttpError, error:
+        m = 'GA API Error %s: %s\n'
+        sys.stderr.write(m % (error.resp.status, error._get_reason()))
+        print >>sys.stderr, request
+        sys.exit(1)
+    except BaseException:
+        traceback.print_exc()
+        sys.exit(5)
+    sys.exit(0)
+
+
+def get_options(args):
+    parser = OptionParser()
+    for arg in args:
+        parser.add_option(arg['val'], dest=arg['dest'],
+                          action=arg['action'], help=arg['help'])
+    options, rest = parser.parse_args()
+
+    assert rest == []
+    assert options.metrics and options.dimensions and options.start_date \
+        and options.end_date and options.view_id and options.key_path
+    return options
+
+
+def run():
+    sys.stdin.close()
+    options = get_options(ARGS)
+
+    print_ga_csv(options.key_path, options.view_id, options.start_date,
+                 options.end_date, options.metrics, options.dimensions,
+                 options.filters)
+
+
+if __name__ == '__main__':
+    run()
