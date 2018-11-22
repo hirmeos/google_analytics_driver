@@ -46,6 +46,12 @@ ARGS = [
         'action': 'append',
         'default': [],
         'help': 'URL regex for sanitisation'
+    }, {
+        'val': '--add-headers',
+        'dest': 'add_headers',
+        'action': 'store_true',
+        'default': [],
+        'help': 'Whether to print report headers'
     }
 ]
 
@@ -155,7 +161,7 @@ def resolve(date, prefix, regex):
             yield (timestamp, uri, country, value)
 
 
-def run(measure, prefix, date, regex):
+def run(measure, prefix, date, regex, add_headers):
     hits = {}
     for timestamp, uri, country, value in resolve(date, prefix, regex):
         key = (timestamp, uri, country)
@@ -164,6 +170,8 @@ def run(measure, prefix, date, regex):
         hits[key] += int(value)
 
     w = unicodecsv.writer(sys.stdout)
+    if add_headers:
+        w.writerow(('Measure', 'Timestamp', 'URI', 'Country', 'Value'))
     for key, value in hits.iteritems():
         row = tuple([measure] + list(key) + [value])
         w.writerow(row)
@@ -174,4 +182,5 @@ AUTH = 'Bearer ' + API_JWTOKEN
 
 if __name__ == '__main__':
     options = get_options(ARGS)
-    run(options.measure, options.prefix, options.date, options.regex)
+    run(options.measure, options.prefix, options.date, options.regex,
+        options.add_headers)

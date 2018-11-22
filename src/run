@@ -6,9 +6,7 @@ individual session (using `annotate_download_logs.py`) for every output file
 produced by `process_download_logs`
 """
 import os
-import sys
 import json
-import unicodecsv
 import subprocess
 from datetime import datetime, timedelta
 
@@ -31,8 +29,8 @@ def get_cache_filename(odir, name, d):
     return "%s/google-analytics_%s_%s.csv" % (odir, d, name)
 
 
-def get_output_filename(odir, start_date, end_date):
-    return "%s/GoogleAnalytics_%s_%s.csv" % (odir, start_date, end_date)
+def get_output_filename(odir, date):
+    return "%s/GoogleAnalytics_%s.csv" % (odir, date)
 
 
 def generate_dates(date, cutoff_date):
@@ -96,12 +94,14 @@ def cache_ga_stats(outputstream, date, key_path, config):
     subprocess.call(cmd, stdout=outputstream)
 
 
-def resolve_cache(output_stream, input_stream, measure, prefix, date, regex):
+def resolve_cache(output_stream, input_stream, measure,
+                  prefix, date, regex, headers):
     regexes = compile_config([{'name': 'regex', 'value': r} for r in regex])
+    add_headers = ['--add-headers'] if headers else []
     cmd = ['./resolve_reports',
            '--measure', measure,
            '--prefix', prefix,
-           '--date', date] + regexes
+           '--date', date] + regexes + add_headers
     subprocess.call(cmd, stdout=output_stream, stdin=input_stream)
 
 
@@ -116,35 +116,29 @@ def run():
             if not exists_and_not_empty(cache_file):
                 cache_ga_stats(outstream(cache_file), date, KEY_PATH, config)
 
-    # get earliest and latest reporting dates to build an output filename
+    # now we standarise GA reports and store them in each output CSV
     earliest_date = get_earliest([m['startDate'] for m in MODES])
-    out_file = get_output_filename(OUTDIR, earliest_date, cutoff_date)
-
-    # exit if output file is too recent
-    try:
-        assert old_or_empty(out_file, CUTOFF_DAYS)
-    except AssertionError:
-        sys.exit(0)
-
-    # get output stream and write the CSV header
-    output = outstream(out_file)
-    w = unicodecsv.writer(output)
-    w.writerow(('Measure', 'Timestamp', 'URI', 'Country', 'Value'))
-
-    # now we standarise GA reports and store them in the output CSV
     for day in generate_dates(earliest_date, cutoff_date):
         date = day.strftime('%Y-%m-%d')
+        out_file = get_output_filename(OUTDIR, date)
+
+        # continue if output file already exists
+        if exists_and_not_empty(out_file):
+            continue
+
+        i = 0
+        output = outstream(out_file)
         for m in MODES:
-            try:
-                cache_file = get_cache_filename(CACHEDIR, m['name'], date)
-                assert exists_and_not_empty(cache_file)
-            except AssertionError:
-                # at this point all *relevant* cache files must exists
+            cache_file = get_cache_filename(CACHEDIR, m['name'], date)
+            # at this point all *relevant* cache files must exists
+            if not exists_and_not_empty(cache_file):
                 continue
             inputs = instream(cache_file)
             regex = m['regex'] if 'regex' in m else []
+            headers = i == 0  # only include headers in first iteration
+            i += 1
             resolve_cache(output, inputs, m['measure'],
-                          m['prefix'], date, regex)
+                          m['prefix'], date, regex, headers)
 
 
 if __name__ == '__main__':
