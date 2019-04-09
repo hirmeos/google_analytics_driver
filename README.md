@@ -62,5 +62,5 @@ MODES=["measure":"https://metrics.operas-eu.org/obp-pdf/sessions/v1","name":"obp
 
 ## Run via crontab
 ```
-0 0 * * 0 docker run --rm --name "google_analytics_driver" --env-file /path/to/config.env -v /somewhere/to/store/analysis:/usr/src/app/cache -v /path/to/config:/usr/src/app/config -v /somewhere/to/store/output:/usr/src/app/output openbookpublishers/google_analytics_driver
+0 0 * * 0 docker run --rm --name "google_analytics_driver" --env-file /path/to/config.env -v google_analytics_cache:/usr/src/app/cache -v metrics:/usr/src/app/output openbookpublishers/google_analytics_driver
 ```
