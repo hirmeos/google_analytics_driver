@@ -6,9 +6,10 @@ import os
 import csv
 import sys
 import json
-import urllib2
 import httplib2
-import unicodecsv
+import urllib.error
+import urllib.parse
+import urllib.request
 from optparse import OptionParser
 
 
@@ -64,8 +65,8 @@ def get_token(url, email, passwd):
     try:
         assert res.status == 200
     except AssertionError:
-        raise ValueError(content)
-    return json.loads(content)['data'][0]['token']
+        raise ValueError(content.decode('utf-8'))
+    return json.loads(content.decode('utf-8'))['data'][0]['token']
 
 
 def url_to_id(url, timestamp):
@@ -80,12 +81,12 @@ def url_to_id(url, timestamp):
     except AssertionError:
         if url in EXCLUDED_URLS:
             return []
-        r = json.loads(content)
-        print >>sys.stderr, "%s: %s (%s)" % (r['message'],
-                                             r['parameters']['uri'], timestamp)
+        r = json.loads(content.decode('utf-8'))
+        p = (r['message'], r['parameters']['uri'], timestamp)
+        print("%s: %s (%s)" % p, file=sys.stderr)
         return []
 
-    entry = json.loads(content)['data']
+    entry = json.loads(content.decode('utf-8'))['data']
     CACHE[url] = entry
 
     return entry
@@ -96,19 +97,19 @@ def normalise_url(url, prefix):
         u = prefix + url.lower()
         return u[:-1] if u[-1] == "/" else u
     except BaseException:
-        print >>sys.stderr, "Error parsing: " + url
+        print("Error parsing: " + url, file=sys.stderr)
         raise
 
 
 def convert_url(url):
     try:
         if url.startswith("http"):
-            u = urllib2.urlparse.urlparse(url).path
+            u = urllib.parse(url).path
         else:
             u = url
         return re.sub(r'^//', '/', re.sub(r'([^:])/+', '\\1/', u))
     except BaseException:
-        print >>sys.stderr, "Error parsing: " + url
+        print("Error parsing: " + url, file=sys.stderr)
         raise
 
 
@@ -173,11 +174,11 @@ def run(measure, prefix, date, regex, add_headers):
             hits[key] = 0
         hits[key] += int(value)
 
-    w = unicodecsv.writer(sys.stdout)
+    w = csv.writer(sys.stdout)
     if add_headers:
         w.writerow(('measure_id', 'timestamp', 'work_uri',
                     'country_uri', 'event_uri', 'value'))
-    for key, value in hits.iteritems():
+    for key, value in hits.items():
         row = tuple([measure] + list(key) + [''] + [value])
         w.writerow(row)
 
