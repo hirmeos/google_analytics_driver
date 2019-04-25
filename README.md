@@ -80,7 +80,7 @@ MODES=["measure":"https://metrics.operas-eu.org/obp-pdf/sessions/v1","name":"obp
 
 ## Run via crontab
 ```
-0 0 * * 0 docker run --rm --name "google_analytics_driver" --env-file /path/to/config.env -v google_analytics_cache:/usr/src/app/cache -v metrics:/usr/src/app/output openbookpublishers/google_analytics_driver
+0 0 * * 0 docker run --rm --name "google_analytics_driver" --env-file /path/to/config.env -v google_analytics_cache:/usr/src/app/cache -v metrics:/usr/src/app/output openbookpublishers/google_analytics_driver:2
 ```
 
 [1]: https://github.com/hirmeos/identifier_translation_service "Identifier Translation Service"
