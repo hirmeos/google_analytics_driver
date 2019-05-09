@@ -14,9 +14,11 @@ from optparse import OptionParser
 
 
 URI_API_ENDP = os.environ['URI_API_ENDP']
-URI_API_USER = os.environ['URI_API_USER']
-URI_API_PASS = os.environ['URI_API_PASS']
-AUTH_API_ENDP = os.environ['AUTH_API_ENDP']
+JWT_DISABLED = os.environ['JWT_DISABLED'] in ('True', 'true')
+if not JWT_DISABLED:
+    URI_API_USER = os.environ['URI_API_USER']
+    URI_API_PASS = os.environ['URI_API_PASS']
+    AUTH_API_ENDP = os.environ['AUTH_API_ENDP']
 URI_SCHEME = os.environ['URI_SCHEME']
 COUNTRY_URI_SCHEME = os.environ['COUNTRY_URI_SCHEME']
 URI_STRICT = os.environ['URI_STRICT']
@@ -75,7 +77,8 @@ def url_to_id(url, timestamp):
     req = "%s?uri=%s&filter=uri_scheme:%s&strict=%s" \
           % (URI_API_ENDP, url, URI_SCHEME, URI_STRICT)
     h = httplib2.Http()
-    res, content = h.request(req, 'GET', headers={'Authorization': AUTH})
+    headers = {} if JWT_DISABLED else {'Authorization': AUTH}
+    res, content = h.request(req, 'GET', headers=headers)
     try:
         assert res.status == 200
     except AssertionError:
@@ -183,8 +186,9 @@ def run(measure, prefix, date, regex, add_headers):
         w.writerow(row)
 
 
-API_JWTOKEN = get_token(AUTH_API_ENDP, URI_API_USER, URI_API_PASS)
-AUTH = 'Bearer ' + API_JWTOKEN
+if not JWT_DISABLED:
+    API_JWTOKEN = get_token(AUTH_API_ENDP, URI_API_USER, URI_API_PASS)
+    AUTH = 'Bearer ' + API_JWTOKEN
 
 if __name__ == '__main__':
     options = get_options(ARGS)
